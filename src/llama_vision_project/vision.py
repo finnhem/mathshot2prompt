@@ -2,6 +2,8 @@ import time
 from PIL import Image, ImageGrab
 from . import ocr
 
+print("🚀 Starting up...")
+
 def print_debug(message: str, level: str = "info", timing: float = None) -> None:
     """Print debug information with formatting."""
     colors = {

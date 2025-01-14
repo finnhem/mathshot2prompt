@@ -1,16 +1,36 @@
+print("📚 Loading libraries...")
+
 import cv2
+print("✓ OpenCV")
 from PIL import Image
+print("✓ PIL")
 import pytesseract
-from texify.inference import batch_inference
-from texify.model.model import load_model
-from texify.model.processor import load_processor
+print("✓ Tesseract")
 import numpy as np
 import time
 from concurrent.futures import ThreadPoolExecutor, Future
 from queue import Queue
 from threading import Event
+import torch
+print("✓ PyTorch")
+
+print("⚡ Loading Texify (this may take a moment)...")
+from texify.inference import batch_inference
+from texify.model.model import load_model, GenerateVisionEncoderDecoderModel
+from texify.model.processor import load_processor
+print("✓ Texify")
+
+import os
+from pathlib import Path
+import torch.serialization
+
+print("✨ All libraries loaded\n")
 
 class OCRProcessor:
+    # Class variable to store cached model
+    _cached_model = None
+    _cached_processor = None
+    
     def __init__(self):
         """Initialize OCR processor with necessary configs."""
         self.initialization_done = Event()
@@ -18,10 +38,74 @@ class OCRProcessor:
         self.processor = None
         self.tesseract_ready = False
         
-        # Start initialization in background
+        # Start only Tesseract initialization in background
         self.executor = ThreadPoolExecutor(max_workers=2)
-        self.init_future = self.executor.submit(self._init_components)
+        self.init_future = self.executor.submit(self._init_tesseract)
+        self.initialization_done.set()  # Mark basic initialization as done
 
+    @classmethod
+    def _load_or_get_cached_model(cls):
+        """Load model from cache or initialize new one."""
+        if cls._cached_model is not None and cls._cached_processor is not None:
+            print("🚀 Using cached model from memory")
+            return cls._cached_model, cls._cached_processor
+            
+        # Create models directory if it doesn't exist
+        model_dir = Path("models")
+        model_dir.mkdir(exist_ok=True)
+        model_path = model_dir / "texify_model.pt"
+        processor_path = model_dir / "texify_processor.pt"
+        
+        # Try to load from disk first
+        if model_path.exists() and processor_path.exists():
+            try:
+                print("💾 Loading model from disk...")
+                torch.serialization.add_safe_globals([GenerateVisionEncoderDecoderModel])
+                
+                # Load with weights_only=False to handle custom classes
+                model = torch.load(model_path, weights_only=False)
+                processor = torch.load(processor_path, weights_only=False)
+                print("✅ Model loaded from disk successfully")
+                cls._cached_model = model
+                cls._cached_processor = processor
+                return model, processor
+            except Exception as e:
+                print(f"⚠️  Failed to load from disk: {str(e).split('. ')[0]}")
+        
+        # If not in memory or disk, load from scratch
+        print("⚡ Initializing model from scratch (first time)...")
+        torch.backends.cudnn.benchmark = True
+        
+        model = load_model()
+        model = model.cuda()
+        processor = load_processor()
+        
+        # Save to disk for faster loading next time
+        try:
+            print("💾 Saving model to disk...")
+            torch.serialization.add_safe_globals([GenerateVisionEncoderDecoderModel])
+            
+            torch.save(model, model_path, pickle_protocol=5)
+            torch.save(processor, processor_path, pickle_protocol=5)
+            print("✅ Model saved successfully")
+        except Exception as e:
+            print(f"⚠️  Failed to save to disk: {str(e).split('. ')[0]}")
+        
+        # Cache in memory
+        cls._cached_model = model
+        cls._cached_processor = processor
+        
+        return model, processor
+    
+    def _init_texify(self):
+        """Initialize Texify model and processor."""
+        try:
+            self.model, self.processor = self._load_or_get_cached_model()
+            return self.model, self.processor
+        except Exception as e:
+            print(f"Error loading Texify model: {e}")
+            raise
+    
     def _init_components(self):
         """Initialize components in background."""
         print("Initializing OCR processor...")
@@ -37,13 +121,6 @@ class OCRProcessor:
         
         print(f"Initialization completed in {time.time() - start_time:.2f}s")
         self.initialization_done.set()
-    
-    def _init_texify(self):
-        """Initialize Texify model and processor."""
-        print("Loading Texify model...")
-        model = load_model()
-        processor = load_processor()
-        return model, processor
     
     def _init_tesseract(self):
         """Initialize Tesseract OCR."""
@@ -188,7 +265,7 @@ class OCRProcessor:
     def segment_math_text(self, image):
         """Segment image into text and math regions using OpenCV."""
         start_time = time.time()
-        print("Segmenting image...")
+        print("🔍 Analyzing image structure...")
         
         # Convert to grayscale and threshold
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -304,16 +381,32 @@ class OCRProcessor:
         # Save debug visualization
         self.visualize_regions(image, text_regions, math_regions)
 
-        print(f"Segmentation completed in {time.time() - start_time:.2f}s")
-        print(f"Found {len(text_regions)} text regions and {len(math_regions)} math regions")
+        print(f"✨ Analysis completed ({time.time() - start_time:.2f}s)")
+        print(f"📊 Found {len(text_regions)} text and {len(math_regions)} math regions")
         return text_regions, math_regions
+
+    def _ensure_model_loaded(self):
+        """Ensure model is loaded before processing math regions."""
+        if self.model is None or self.processor is None:
+            self.model, self.processor = self._load_or_get_cached_model()
 
     def process_image(self, pil_image):
         """Process a PIL Image directly."""
         try:
             start_time = time.time()
             
-            # Convert PIL image to OpenCV format and start segmentation immediately
+            # Check image size and resize if too large
+            max_dimension = 2000
+            w, h = pil_image.size
+            if w > max_dimension or h > max_dimension:
+                print(f"📐 Resizing {w}x{h} → ", end='')
+                scale = max_dimension / max(w, h)
+                new_w = int(w * scale)
+                new_h = int(h * scale)
+                pil_image = pil_image.resize((new_w, new_h), Image.Resampling.LANCZOS)
+                print(f"{new_w}x{new_h}")
+            
+            # Convert and segment
             image = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
             text_regions, math_regions = self.segment_math_text(image)
             
@@ -322,46 +415,70 @@ class OCRProcessor:
                 'equations': []
             }
             
-            # Wait for initialization to complete if it hasn't already
-            if not self.initialization_done.is_set():
-                print("Waiting for model initialization to complete...")
-                self.init_future.result()
-            
             # Process regions in parallel
             futures = []
             
-            # Process text regions with Tesseract
+            # Process text regions
             if text_regions:
-                print("Processing text regions with Tesseract...")
+                print(f"📝 Processing {len(text_regions)} text regions...")
                 text_start = time.time()
                 for x, y, w, h in text_regions:
                     region = pil_image.crop((x, y, x+w, y+h))
                     future = self.executor.submit(pytesseract.image_to_string, region)
                     futures.append(('text', future))
-                print(f"Text processing queued in {time.time() - text_start:.2f}s")
 
-            # Process math regions with Texify
+            # Process math regions
             if math_regions:
-                print("Processing math regions with Texify...")
+                print(f"🔢 Processing {len(math_regions)} math regions...")
                 math_start = time.time()
-                for x, y, w, h in math_regions:
-                    region = pil_image.crop((x, y, x+w, y+h))
-                    future = self.executor.submit(
-                        batch_inference, [region], self.model, self.processor
-                    )
-                    futures.append(('math', future))
-                print(f"Math processing queued in {time.time() - math_start:.2f}s")
-
+                
+                self._ensure_model_loaded()
+                
+                # Process in batches
+                batch_size = 4
+                for i in range(0, len(math_regions), batch_size):
+                    batch_regions = []
+                    batch_indices = []
+                    
+                    for j, (x, y, w, h) in enumerate(math_regions[i:i + batch_size]):
+                        region = pil_image.crop((x, y, x+w, y+h))
+                        batch_regions.append(region)
+                        batch_indices.append(i + j)
+                    
+                    if batch_regions:
+                        future = self.executor.submit(
+                            batch_inference, batch_regions, self.model, self.processor
+                        )
+                        futures.append(('math_batch', (future, batch_indices)))
+                        
+                        progress = min((i + batch_size), len(math_regions))
+                        print(f"⚡ Processing batch {i//batch_size + 1}/{(len(math_regions) + batch_size - 1)//batch_size}")
+                
             # Collect results as they complete
-            for type_, future in futures:
-                result = future.result()
-                if type_ == 'text' and result.strip():
-                    results['text'].append(result.strip())
-                elif type_ == 'math':
-                    results['equations'].append(result[0])
+            text_results = []
+            math_results = [None] * len(math_regions)  # Pre-allocate list
+            
+            for item in futures:
+                if item[0] == 'text':
+                    result = item[1].result()
+                    if result.strip():
+                        text_results.append(result.strip())
+                elif item[0] == 'math_batch':
+                    future, indices = item[1]
+                    batch_results = future.result()
+                    # Store results in correct order
+                    for idx, result in zip(indices, batch_results):
+                        math_results[idx] = result
+            
+            # Remove any None values from math results (in case of errors)
+            math_results = [r for r in math_results if r is not None]
+            
+            results['text'] = text_results
+            results['equations'] = math_results
 
+            print(f"✅ Processing completed in {time.time() - start_time:.1f}s")
             return results
 
         except Exception as e:
-            print(f"❌ OCR error: {str(e)}")
+            print(f"❌ Error: {str(e)}")
             return {'text': [], 'equations': []} 
