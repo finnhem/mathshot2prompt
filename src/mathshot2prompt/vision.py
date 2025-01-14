@@ -1,3 +1,5 @@
+"""Main entry point for the image-to-LaTeX converter."""
+
 import time
 from PIL import Image, ImageGrab
 from . import ocr
@@ -64,26 +66,21 @@ def get_clipboard_image() -> Image.Image:
 
 if __name__ == "__main__":
     total_start_time = time.time()
-    print_debug("Starting OCR analysis...", "info")
+    print_debug("Starting LaTeX analysis...", "info")
     
     try:
         # Get image from clipboard
         clipboard_start = time.time()
         image_data = get_clipboard_image()
         
-        # Process image with OCR
+        # Process image with LaTeX processor
         ocr_start = time.time()
         print_debug("Processing image segments...", "info")
-        processor = ocr.OCRProcessor()
+        processor = ocr.LatexProcessor()
         result = processor.process_image(image_data)
         print_debug("Image processing completed", "success", time.time() - ocr_start)
         
         # Print results
-        print("\nExtracted Text:")
-        print("=" * 40)
-        for text in result['text']:
-            print(text)
-            
         print("\nExtracted Equations:")
         print("=" * 40)
         for equation in result['equations']:

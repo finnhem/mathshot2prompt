@@ -30,7 +30,6 @@ ENV/
 exercise_img_to_prompt/
 
 # Project specific
-models/
 debug_regions.png
 *.pt
 
