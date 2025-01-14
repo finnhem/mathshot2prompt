@@ -1,0 +1,38 @@
+[project]
+name = "llama-vision-project"
+version = "0.1.0"
+description = "Local Llama Vision demo using Ollama"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.2.1",
+    "ollama>=0.4.6",
+    "opencv-python>=4.10.0.84",
+    "pillow<11.0.0",
+    "pyperclip>=1.9.0",
+    "pytesseract>=0.3.13",
+    "texify>=0.2.1",
+    "torch>=2.7.0.dev20250114",
+    "torchaudio>=2.6.0.dev20250114",
+    "torchvision>=0.22.0.dev20250114",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/llama_vision_project"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"] 
+
+[[tool.uv.index]]
+name = "pytorch"
+url = "https://download.pytorch.org/whl/nightly/cu126"
+explicit = true
+
+
+[tool.uv.sources]
+torch = { index = "pytorch" }
+torchvision = { index = "pytorch" }
+torchaudio = { index = "pytorch" }
