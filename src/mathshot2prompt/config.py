@@ -1,4 +1,4 @@
-"""Configuration settings for the Llama Vision project."""
+"""Configuration settings for MathShot2Prompt."""
 
 SYSTEM_PROMPTS = {
     "default": """You are an AI assistant that helps users understand images. 

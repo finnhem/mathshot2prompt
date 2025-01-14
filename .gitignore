@@ -1,6 +1,6 @@
 # Python
 __pycache__/
-src/llama_vision_project/__pycache__/
+src/mathshot2prompt/__pycache__/
 *.py[cod]
 *$py.class
 *.so

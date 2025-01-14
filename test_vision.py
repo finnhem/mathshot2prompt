@@ -1,4 +1,4 @@
-import ollama
+from mathshot2prompt import vision
 from pathlib import Path
 
 def analyze_image(image_path: str, prompt: str = "What is in this image?") -> str:
