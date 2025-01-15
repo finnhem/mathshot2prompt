@@ -1,8 +1,11 @@
 """Main entry point for the image-to-LaTeX converter."""
 
 import time
+import numpy as np
 from PIL import Image, ImageGrab
+import cv2
 from . import ocr
+from .llm_corrector import LLMCorrector
 
 print("🚀 Starting up...")
 
@@ -71,20 +74,36 @@ if __name__ == "__main__":
     try:
         # Get image from clipboard
         clipboard_start = time.time()
-        image_data = get_clipboard_image()
+        pil_image = get_clipboard_image()
+        
+        # Convert PIL Image to numpy array
+        image = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
         
         # Process image with LaTeX processor
         ocr_start = time.time()
         print_debug("Processing image segments...", "info")
         processor = ocr.LatexProcessor()
-        result = processor.process_image(image_data)
+        result = processor.process_image(image)
         print_debug("Image processing completed", "success", time.time() - ocr_start)
         
-        # Print results
+        # Combine equations into a single text
+        combined_text = "\n\n".join(result['equations'])
+        
         print("\nExtracted Equations:")
         print("=" * 40)
-        for equation in result['equations']:
-            print(equation)
+        print(combined_text)
+        
+        # Initialize LLM corrector and process text
+        llm_start = time.time()
+        print_debug("Starting LLM correction...", "info")
+        corrector = LLMCorrector(model="phi4")
+        corrected_text = corrector.correct_text(combined_text)
+        print_debug("LLM correction completed", "success", time.time() - llm_start)
+        
+        # Print results
+        print("\nCorrected Output:")
+        print("=" * 40)
+        print(corrected_text)
             
     except ValueError as e:
         print_debug(str(e), "error")

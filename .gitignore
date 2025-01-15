@@ -51,4 +51,4 @@ debug_regions.png
 .env.test.local
 .env.production.local 
 
-debug_regions.png
+debug_*.png

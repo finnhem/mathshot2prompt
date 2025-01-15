@@ -22,6 +22,7 @@ class LatexProcessor:
         self.processor = None
         self.executor = ThreadPoolExecutor(max_workers=4)
         self.initialization_done = False
+        self._init_start_time = time.time()
         
         # Start initialization in background
         self._init_components()
@@ -98,76 +99,43 @@ class LatexProcessor:
         if self.model is None or self.processor is None:
             self.model, self.processor = self._load_or_get_cached_model()
 
-    def process_image(self, pil_image):
-        """Process a PIL Image directly."""
-        try:
-            start_time = time.time()
+    def process_image(self, image):
+        """Process image and extract equations."""
+        # Convert image to BGR if needed
+        if len(image.shape) == 2:
+            image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+        elif image.shape[2] == 4:
+            image = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
+        
+        # Get regions and normalized image
+        regions, normalized_image = segment_regions(image)
+        
+        # Process regions in batches
+        equations = []
+        batch_size = 4  # Process 4 regions at a time for GPU efficiency
+        
+        print(f"🔢 Processing {len(regions)} regions...")
+        for i in range(0, len(regions), batch_size):
+            batch = regions[i:i + batch_size]
+            print(f"⚡ Processing batch {i//batch_size + 1}/{(len(regions) + batch_size - 1)//batch_size}")
             
-            # Check image size and resize if too large
-            max_dimension = 2000
-            w, h = pil_image.size
-            if w > max_dimension or h > max_dimension:
-                print(f"📐 Resizing {w}x{h} → ", end='')
-                scale = max_dimension / max(w, h)
-                new_w = int(w * scale)
-                new_h = int(h * scale)
-                pil_image = pil_image.resize((new_w, new_h), Image.Resampling.LANCZOS)
-                print(f"{new_w}x{new_h}")
+            # Extract region images
+            region_images = []
+            for x, y, w, h in batch:
+                # Use normalized image for region extraction
+                region = normalized_image[y:y+h, x:x+w]
+                # Convert to PIL Image for model
+                pil_region = Image.fromarray(cv2.cvtColor(region, cv2.COLOR_BGR2RGB))
+                region_images.append(pil_region)
             
-            # Convert and segment
-            image = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
-            regions = segment_regions(image)
-            
-            results = {
-                'text': [],
-                'equations': []
-            }
-            
-            # Process regions in parallel
-            futures = []
-            
-            # Process all regions with Texify
-            if regions:
-                print(f"🔢 Processing {len(regions)} regions...")
-                
-                self._ensure_model_loaded()
-                
-                # Process in batches
-                batch_size = 4
-                for i in range(0, len(regions), batch_size):
-                    batch_regions = []
-                    batch_indices = []
-                    
-                    for j, (x, y, w, h) in enumerate(regions[i:i + batch_size]):
-                        region = pil_image.crop((x, y, x+w, y+h))
-                        batch_regions.append(region)
-                        batch_indices.append(i + j)
-                    
-                    if batch_regions:
-                        future = self.executor.submit(
-                            batch_inference, batch_regions, self.model, self.processor
-                        )
-                        futures.append(('math_batch', (future, batch_indices)))
-                        
-                        print(f"⚡ Processing batch {i//batch_size + 1}/{(len(regions) + batch_size - 1)//batch_size}")
-                
-            # Collect results as they complete
-            math_results = [None] * len(regions)  # Pre-allocate list
-            
-            for item in futures:
-                future, indices = item[1]
-                batch_results = future.result()
-                # Store results in correct order
-                for idx, result in zip(indices, batch_results):
-                    math_results[idx] = result
-            
-            # Remove any None values from results (in case of errors)
-            math_results = [r for r in math_results if r is not None]
-            results['equations'] = math_results
-
-            print(f"✅ Processing completed in {time.time() - start_time:.1f}s")
-            return results
-
-        except Exception as e:
-            print(f"❌ Error: {str(e)}")
-            return {'text': [], 'equations': []} 
+            # Process batch
+            self._ensure_model_loaded()
+            future = self.executor.submit(batch_inference, region_images, self.model, self.processor)
+            results = future.result()
+            equations.extend([r for r in results if r is not None])
+        
+        print(f"✅ Processing completed in {time.time() - self._init_start_time:.1f}s")
+        
+        return {
+            'equations': equations
+        } 
